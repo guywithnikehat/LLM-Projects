@@ -4,52 +4,26 @@
 !pip install duckduckgo-search
 !pip install langchain-openai
 
-######################################
 
 import os
 import openai
 os.environ['OPENAI_API_KEY'] = str("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")
 
-######################################
-
-
-from langchain.prompts.chat import (
-    ChatPromptTemplate,
-    HumanMessagePromptTemplate,
-    SystemMessagePromptTemplate,
-)
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
+from langchain_core.runnables import RunnableLambda
 from langchain_openai import ChatOpenAI
 
-
-#from langchain.chat_models import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate, FewShotChatMessagePromptTemplate
-from langchain.schema.output_parser import StrOutputParser
-from langchain.schema.runnable import RunnableLambda
-
-######################################
-
 # Few Shot Examples
-
 examples = [
-
-            {
-        "input": "Can you provide information on The Beatles' discography?",
-        "output": "what are The Beatles' notable albums?",
+    {
+        "input": "Could the members of The Police perform lawful arrests?",
+        "output": "what can the members of The Police do?",
     },
     {
-        "input": "Was Obama US president before Trump?",
-        "output": "Who are The US presidents and their name and sworn date?",
+        "input": "Jan Sindel’s was born in what country?",
+        "output": "what is Jan Sindel’s personal history?",
     },
-    {
-        "input": "Where was Elon Musk born?",
-        "output": "what are the details of Elon Musk's birthplace?",
-    },
-    {
-        "input": "Tell me about the main characters in Shakespeare's 'Romeo and Juliet'.",
-        "output": "what are the key characters in 'Romeo and Juliet'?",
-    },
-
 ]
 # We now transform these to example messages
 example_prompt = ChatPromptTemplate.from_messages(
@@ -62,3 +36,52 @@ few_shot_prompt = FewShotChatMessagePromptTemplate(
     example_prompt=example_prompt,
     examples=examples,
 )
+
+prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are an expert at world knowledge. Your task is to step back and paraphrase a question to a more generic step-back question, which is easier to answer. Here are a few examples:""",
+        ),
+        # Few shot examples
+        few_shot_prompt,
+        # New question
+        ("user", "{question}"),
+    ]
+)
+
+question_gen = prompt | ChatOpenAI(temperature=0) | StrOutputParser()
+
+question_gen.invoke({"question": question})
+
+from langchain_community.utilities import DuckDuckGoSearchAPIWrapper
+
+search = DuckDuckGoSearchAPIWrapper(max_results=4)
+
+
+def retriever(query):
+    return search.run(query)
+
+retriever(question)
+
+retriever(question_gen.invoke({"question": question}))
+
+from langchain import hub
+
+response_prompt = hub.pull("langchain-ai/stepback-answer")
+
+chain = (
+    {
+        # Retrieve context using the normal question
+        "normal_context": RunnableLambda(lambda x: x["question"]) | retriever,
+        # Retrieve context using the step-back question
+        "step_back_context": question_gen | retriever,
+        # Pass on the question
+        "question": lambda x: x["question"],
+    }
+    | response_prompt
+    | ChatOpenAI(temperature=0)
+    | StrOutputParser()
+)
+
+chain.invoke({"question": question})
